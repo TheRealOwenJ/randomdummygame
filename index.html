@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>random dummy game</title>
+<style>
+html, body { margin:0; padding:0; overflow:hidden; background:#222; font-family:sans-serif; }
+canvas { display:block; }
+#ui {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    z-index: 10;
+    color: white;
+}
+#ui input, #ui button {
+    margin-top: 5px;
+    padding: 5px 10px;
+    font-size: 14px;
+}
+</style>
+</head>
+<body>
+<div id="ui">
+    <div>
+        Name your dummy: <input id="dummyNameInput" placeholder="Dummy Name">
+        <button id="setNameBtn">Set Name</button>
+    </div>
+    <div>
+        Color: <input type="color" id="dummyColorInput" value="#ff0000">
+        <button id="setColorBtn">Set Color</button>
+    </div>
+    <button id="spawnBtn">Spawn Dummy</button>
+</div>
+<canvas id="gameCanvas"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+const { Engine, World, Bodies, Body, Mouse, MouseConstraint, Events } = Matter;
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const engine = Engine.create();
+const world = engine.world;
+engine.gravity.y = 2;
+
+// Boundaries
+const boundaryOptions = { isStatic:true };
+const ground = Bodies.rectangle(canvas.width/2, canvas.height-50, canvas.width, 100, boundaryOptions);
+const leftWall = Bodies.rectangle(-50, canvas.height/2, 100, canvas.height, boundaryOptions);
+const rightWall = Bodies.rectangle(canvas.width+50, canvas.height/2, 100, canvas.height, boundaryOptions);
+const ceiling = Bodies.rectangle(canvas.width/2, -50, canvas.width, 100, boundaryOptions);
+World.add(world, [ground, leftWall, rightWall, ceiling]);
+
+class Dummy {
+    constructor(x,y){
+        this.body = Bodies.rectangle(x, y, 60, 60, {
+            restitution: 0.9,
+            friction: 0.2,
+            frictionAir:0.05,
+            density:0.004,
+            inertia: Infinity
+        });
+        this.color = document.getElementById("dummyColorInput").value;
+        this.name = document.getElementById("dummyNameInput").value || "Dummy";
+        this.emotion = "happy";
+        this.isDragged = false;
+        this.onGround = false;
+        this.walkDir = 0;
+        World.add(world, this.body);
+
+        // random loop richting
+        setInterval(() => {
+            if(!this.isDragged && this.emotion === "happy") this.walkDir = [-1,0,1][Math.floor(Math.random()*3)];
+        }, 2000);
+    }
+
+    setEmotion(newEmotion){
+        this.emotion = newEmotion;
+    }
+
+    followMouse(mouse){
+        if(!mouse.position) return;
+        const dx = mouse.position.x - this.body.position.x;
+        Body.applyForce(this.body, this.body.position, {x: dx*0.0003, y:0});
+    }
+
+    walkRandom(){
+        Body.applyForce(this.body, this.body.position, { x: 0.008*this.walkDir, y:0 });
+        if(Math.random() < 0.01) this.walkDir*=-1;
+    }
+
+    update(mouse){
+        // check of op grond
+        this.onGround = this.body.position.y + 30 >= ground.position.y - 50;
+
+        // emotie logica
+        if(this.isDragged){
+            this.setEmotion("sad");
+        } else if(this.onGround && mouse.position && Math.hypot(mouse.position.x-this.body.position.x, mouse.position.y-this.body.position.y)<150){
+            this.setEmotion("curious");
+            this.followMouse(mouse);
+        } else if(this.onGround){
+            this.setEmotion("happy");
+            this.walkRandom();
+        } else if(this.emotion === "sad" && !this.onGround){
+            // blijft sad in lucht
+            // niks doen
+        } else {
+            this.setEmotion("happy");
+            this.walkRandom();
+        }
+    }
+
+    draw(ctx){
+        const pos = this.body.position;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(pos.x -30, pos.y -30, 60, 60);
+
+        // ogen
+        ctx.fillStyle="#000";
+        ctx.beginPath();
+        ctx.arc(pos.x -10, pos.y -10, 8, 0, Math.PI*2);
+        ctx.arc(pos.x +10, pos.y -10, 8, 0, Math.PI*2);
+        ctx.fill();
+
+        // mond
+        ctx.beginPath();
+        if(this.emotion==="happy") ctx.arc(pos.x,pos.y+8,8,0,Math.PI,false);
+        else if(this.emotion==="sad") ctx.arc(pos.x,pos.y+14,8,0,Math.PI,true);
+        else if(this.emotion==="curious") ctx.arc(pos.x,pos.y+8,5,0,Math.PI*2);
+        ctx.strokeStyle="#000";
+        ctx.lineWidth=3;
+        ctx.stroke();
+
+        // naam
+        ctx.fillStyle="#fff";
+        ctx.font="16px sans-serif";
+        ctx.textAlign="center";
+        ctx.fillText(this.name,pos.x,pos.y-40);
+    }
+}
+
+let dummy = null;
+function spawnDummy(){
+    if(dummy) World.remove(world, dummy.body);
+    dummy = new Dummy(canvas.width/2, 100);
+}
+
+// mouse
+const mouse = Mouse.create(canvas);
+const mouseConstraint = MouseConstraint.create(engine, {
+    mouse: mouse,
+    constraint: { stiffness:0.1, render:{visible:false} }
+});
+World.add(world, mouseConstraint);
+
+Events.on(mouseConstraint, "startdrag", e=>{
+    if(dummy && e.body === dummy.body) dummy.isDragged=true;
+});
+Events.on(mouseConstraint, "enddrag", e=>{
+    if(dummy && e.body === dummy.body) dummy.isDragged=false;
+});
+
+// loop
+(function renderLoop(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#555";
+    ctx.fillRect(0, ground.position.y-50, canvas.width, 100);
+
+    if(dummy) dummy.update(mouse), dummy.draw(ctx);
+
+    Engine.update(engine, 1000/60);
+    requestAnimationFrame(renderLoop);
+})();
+
+// UI
+document.getElementById("spawnBtn").addEventListener("click",spawnDummy);
+document.getElementById("setNameBtn").addEventListener("click", ()=>{
+    if(dummy) dummy.name=document.getElementById("dummyNameInput").value||"Dummy";
+});
+document.getElementById("setColorBtn").addEventListener("click", ()=>{
+    if(dummy) dummy.color=document.getElementById("dummyColorInput").value;
+});
+
+// resize
+window.addEventListener("resize", ()=>{
+    canvas.width=window.innerWidth;
+    canvas.height=window.innerHeight;
+    Body.setPosition(ground, {x:canvas.width/2, y:canvas.height-50});
+    Body.setPosition(ceiling, {x:canvas.width/2, y:-50});
+});
+</script>
+</body>
+</html>
